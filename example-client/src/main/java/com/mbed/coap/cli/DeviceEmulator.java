@@ -20,6 +20,7 @@ import static java.util.concurrent.CompletableFuture.*;
 import com.mbed.coap.client.RegistrationManager;
 import com.mbed.coap.packet.CoapRequest;
 import com.mbed.coap.packet.CoapResponse;
+import com.mbed.coap.packet.MediaTypes;
 import com.mbed.coap.packet.Opaque;
 import com.mbed.coap.server.CoapServer;
 import com.mbed.coap.server.ObservableResourceService;
@@ -32,6 +33,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,6 +45,7 @@ public class DeviceEmulator {
     protected final ScheduledExecutorService scheduledExecutor = Executors.newSingleThreadScheduledExecutor();
     private RegistrationManager registrationManager;
     protected final CoapSchemes providers;
+
 
     public static void main(String[] args) {
         main(args, new DeviceEmulator(new CoapSchemes()));
@@ -107,10 +110,29 @@ public class DeviceEmulator {
                 .build().start();
 
         //registration
-        String links = "</3/0/1>,</3/0/2>,</3/0/3>,</delayed-10s>";
+        String links = "</1>;ver=1.1,</1/0>,</3>;ver=1.2,</3/0>,</6/0>,</3303>;ver=1.1,</3303/0>,</3442/0>";
         this.registrationManager = new RegistrationManager(emulatorServer, uri, links, scheduledExecutor);
         LOGGER.info("Resources: {}", links);
-        registrationManager.register();
+        //registrationManager.register();
+
+        Consumer<CoapResponse>  successCallback = new Consumer<CoapResponse>() {
+            @Override
+            public void accept(CoapResponse response) {
+                    LOGGER.info("Callback response success " +  response.toString());
+            }
+        };
+
+        Consumer<CoapResponse>  errorCallback = new Consumer<CoapResponse>() {
+            @Override
+            public void accept(CoapResponse response) {
+                LOGGER.info("Callback response error " +  response.toString());
+            }
+        };
+        
+
+        registrationManager.registerWithCallbacks(successCallback,errorCallback);
+
+        
     }
 
     protected Service<CoapRequest, CoapResponse> createRouting() {
@@ -121,9 +143,9 @@ public class DeviceEmulator {
         );
 
         return RouterService.builder()
-                .get("/3/0/1", __ -> completedFuture(CoapResponse.ok("Acme")))
-                .get("/3/0/2", __ -> completedFuture(CoapResponse.ok("Emulator")))
-                .get("/3/0/3", __ -> completedFuture(CoapResponse.ok("0.0.1")))
+                .get("/3/0/1", __ -> completedFuture(CoapResponse.ok("[{\"bn\":\"/3/0/1\",\"vs\":\"Acme\"}]", MediaTypes.CT_APPLICATION_SENML_JSON)))
+                .get("/3/0/2", __ -> completedFuture(CoapResponse.ok("[{\"bn\":\"/3/0/2\",\"vs\":\"Emulator\"}]", MediaTypes.CT_APPLICATION_SENML_JSON)))
+                .get("/3/0/3", __ -> completedFuture(CoapResponse.ok("[{\"bn\":\"/3/0/3\",\"vs\":\"1.0.0\"}]", MediaTypes.CT_APPLICATION_SENML_JSON)))
                 .get("/delayed-10s", __ -> {
                     CompletableFuture<CoapResponse> promise = new CompletableFuture<>();
                     scheduledExecutor.schedule(() -> promise.complete(CoapResponse.ok("OK")), 10, TimeUnit.SECONDS);
@@ -133,7 +155,6 @@ public class DeviceEmulator {
                 .build();
 
     }
-
 
     RegistrationManager getRegistrationManager() {
         return registrationManager;

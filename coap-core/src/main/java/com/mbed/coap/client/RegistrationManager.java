@@ -17,6 +17,7 @@
 package com.mbed.coap.client;
 
 import static com.mbed.coap.packet.CoapRequest.*;
+import com.mbed.coap.packet.CoapResponse;
 import com.mbed.coap.packet.Code;
 import com.mbed.coap.packet.MediaTypes;
 import com.mbed.coap.server.CoapServer;
@@ -27,6 +28,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +75,10 @@ public class RegistrationManager {
     }
 
     public void register() {
+        this.registerWithCallbacks((response) -> {}, (response) -> {});
+    }
+
+    public void registerWithCallbacks(Consumer<CoapResponse> successCallback, Consumer<CoapResponse> errorCallback) {
         client.send(post(registrationUri.getPath())
                         .query(registrationUri.getQuery())
                         .payload(registrationLinks, MediaTypes.CT_APPLICATION_LINK__FORMAT)
@@ -80,8 +86,10 @@ public class RegistrationManager {
                 .thenAccept(resp -> {
                     if (resp.getCode().equals(Code.C201_CREATED)) {
                         registrationSuccess(resp.options().getLocationPath(), resp.options().getMaxAgeValue());
+                        successCallback.accept(resp);
                     } else {
                         registrationFailed(String.format("%s '%s'", resp.getCode().codeToString(), resp.getPayload().toUtf8String()));
+                        errorCallback.accept(resp);
                     }
                 })
                 .exceptionally(ex -> {
@@ -123,7 +131,33 @@ public class RegistrationManager {
     private void updateFailed(String errMessage) {
         LOGGER.warn("[EP:{}] Update failed. {}", epName, errMessage);
         registrationLocation = Optional.empty();
-        register();
+        final ReponseCallbackSync syncObject = new ReponseCallbackSync();
+        registerWithCallbacks((response) -> {
+            synchronized (syncObject) {
+                syncObject.response = response;
+                syncObject.success = true;
+                syncObject.notifyAll();
+            }
+        }, (response) -> {
+            synchronized (syncObject) {
+                syncObject.response = response;
+                syncObject.success = false;
+                syncObject.notifyAll();
+            }
+        });
+
+        try {
+            if(syncObject.response != null) {
+                syncObject.wait();
+            }
+        } catch (InterruptedException ignored) {
+        }
+
+        if(syncObject.success) {
+            System.out.println("SUCCESS: " + syncObject.response);
+        } else {
+            System.out.println("ERROR: " + syncObject.response);
+        }
     }
 
     protected void registrationFailed(String errMessage) {
@@ -157,5 +191,8 @@ public class RegistrationManager {
         }
         return newDelay;
     }
-
+    private class ReponseCallbackSync {
+        CoapResponse response;
+        boolean success;
+    }
 }
